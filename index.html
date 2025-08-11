@@ -55,7 +55,19 @@
   #davList{max-height:42vh;overflow:auto;border:1px solid #0003;border-radius:8px;padding:6px}
   .row-file{padding:8px;border-radius:6px;background:#1a1a1a;margin:4px 0;word-break:break-all;cursor:pointer}
   .row-file:hover{background:#222}
+/* Scale pop */
+#popScale{left:10px;top:56px}
+.scale-chip{border:0;border-radius:999px;padding:6px 10px;background:#1a1a1a;color:#fff;cursor:pointer}
+.scale-chip.sel{background:#2d5aff}
 
+/* cho phép đổi tỉ lệ khung */
+.frame[data-ratio="16:9"]{aspect-ratio:16/9}
+.frame[data-ratio="4:3"] {aspect-ratio:4/3}
+.frame[data-ratio="1:1"] {aspect-ratio:1/1}
+.frame[data-ratio="21:9"]{aspect-ratio:21/9}
+
+/* vùng chạm góc dưới phải để fullscreen */
+.corner-hit{position:absolute;right:0;bottom:0;width:22%;height:38px;cursor:pointer;z-index:4}
 </style>
 </head>
 <body>
@@ -119,7 +131,24 @@
     <div id="davList"></div>
     <div style="opacity:.7;margin-top:6px;font-size:12px">Gợi ý: nếu server public, để trống user/pass. Với Basic Auth, trình duyệt có thể yêu cầu tải file thành blob trước khi phát.</div>
   </div>
+<!-- nút Scale (thay Rotate) -->
+<button class="rotate" id="btnScale">Scale</button>
 
+<!-- Scale popover -->
+<div class="pop" id="popScale">
+  <div style="font-weight:700;margin-bottom:6px">Scale / Aspect</div>
+  <div class="chips" id="scaleList">
+    <button class="scale-chip" data-scale="fit">Fit</button>
+    <button class="scale-chip" data-scale="fill">Fill</button>
+    <button class="scale-chip" data-ratio="16:9">16:9</button>
+    <button class="scale-chip" data-ratio="4:3">4:3</button>
+    <button class="scale-chip" data-ratio="1:1">1:1</button>
+    <button class="scale-chip" data-ratio="21:9">21:9</button>
+  </div>
+</div>
+
+<!-- vùng chạm nhanh để fullscreen -->
+<div class="corner-hit" id="cornerHit"></div>
   <!-- bottom bar -->
   <div class="bar">
     <button class="btn" id="pp">▶</button>
@@ -157,7 +186,21 @@ btnS.onclick=()=>openOnly(popS);
 btnU.onclick=()=>openOnly(popU);
 btnF.onclick=()=>openOnly(popF);
 btnD.onclick=()=>openOnly(popD);
+fs.onclick = async () => {
+  try {
+    // iOS Safari ưu tiên enter fullscreen trên <video>
+    if (typeof v.webkitEnterFullscreen === 'function') {
+      v.webkitEnterFullscreen(); return;
+    }
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else if (v.requestFullscreen) await v.requestFullscreen();
+    else if (v.webkitRequestFullscreen) v.webkitRequestFullscreen();
+    else if (v.msRequestFullscreen) v.msRequestFullscreen();
+  } catch(e) { alert('Fullscreen không khả dụng: ' + e); }
+};
 
+// chạm góc dưới-phải để fullscreen nhanh
+document.getElementById('cornerHit').onclick = () => fs.onclick();
 /* ===== play by URL (mp4 / m3u8 …) ===== */
 async function playURL(u){
   if(!u) return; destroyHls();
@@ -302,6 +345,42 @@ davUp.onclick=()=>{
 (function autoload(){
   const u=new URLSearchParams(location.search).get('src'); if(u){ urlIn.value=u; playURL(u); }
 })();
+const btnScale = document.getElementById('btnScale');
+const popScale = document.getElementById('popScale');
+const scaleList = document.getElementById('scaleList');
+
+btnScale.onclick = () => openOnly(popScale);
+
+function markScale(el){
+  scaleList.querySelectorAll('.scale-chip').forEach(x=>x.classList.remove('sel'));
+  el.classList.add('sel');
+}
+scaleList.addEventListener('click', (e)=>{
+  const b = e.target.closest('.scale-chip'); if (!b) return;
+  // reset
+  frame.removeAttribute('data-ratio');
+  v.style.objectFit = 'contain';
+  // fill/fit
+  if (b.dataset.scale === 'fill') v.style.objectFit = 'cover';
+  else if (b.dataset.scale === 'fit') v.style.objectFit = 'contain';
+  // aspect presets
+  if (b.dataset.ratio) frame.setAttribute('data-ratio', b.dataset.ratio);
+  markScale(b);
+  openOnly(null);
+});
+
+// mặc định: Fit
+markScale(scaleList.querySelector('[data-scale="fit"]'));
+function applyAutoFit(){
+  // If video dọc (height>width) và màn hình dọc => fit, màn hình ngang => fill theo chiều cao
+  // Thực tế khó đọc metadata trước khi play; ta dùng bounding box sau khi loadedmetadata
+  const rect = v.getBoundingClientRect();
+  const portraitVideo = v.videoHeight > v.videoWidth;
+  const portraitScreen = window.innerHeight >= window.innerWidth;
+  if (portraitVideo && portraitScreen) { v.style.objectFit='contain'; frame.removeAttribute('data-ratio'); }
+}
+window.addEventListener('orientationchange', applyAutoFit);
+v.addEventListener('loadedmetadata', applyAutoFit);
 </script>
 </body>
 </html>
