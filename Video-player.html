@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Frame Player (tap-to-reveal)</title>
+<style>
+  :root{--frame:#000;--ui:#0f0f0f;--fg:#fff;--muted:#b9b9b9;--prog:#e53935;--buf:#5b5b5b;--chip:#1a1a1a;--chip-sel:#2d5aff}
+  *{box-sizing:border-box} body{margin:0;background:#f4f4f4;min-height:100vh;display:grid;place-items:center;font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial}
+  .frame{width:min(1000px,96vw);aspect-ratio:16/9;position:relative;background:#fff;box-shadow:0 0 0 14px var(--frame)}
+  video{width:100%;height:100%;display:block;background:#000;object-fit:contain}
+  video::-webkit-media-controls{display:none !important}
+
+  /* bottom controls */
+  .bar{position:absolute;left:0;right:0;bottom:0;background:var(--ui);color:var(--fg);
+       display:flex;align-items:center;gap:12px;padding:8px 10px;opacity:0;transition:.2s}
+  .frame.show-ui .bar{opacity:1}
+  .btn{appearance:none;border:0;background:transparent;color:#fff;font-size:18px;cursor:pointer}
+  .time{min-width:78px;color:var(--muted)}
+  .track{position:relative;height:6px;flex:1;border-radius:999px;background:#1a1a1a;overflow:hidden}
+  .buf,.prog{position:absolute;left:0;top:0;bottom:0;width:0%}.buf{background:var(--buf)}.prog{background:var(--prog)}
+  #seek{position:absolute;inset:0;opacity:0}
+
+  /* icon dock (tap to open panels) */
+  .dock{position:absolute;right:10px;top:10px;display:flex;gap:8px;opacity:0;transition:.2s;z-index:5}
+  .frame.show-ui .dock{opacity:1}
+  .icon{width:36px;height:36px;border:2px solid #000;border-radius:8px;background:#fff;display:grid;place-items:center;cursor:pointer;font-weight:900}
+
+  /* Scale button (thay chỗ Rotate cũ) */
+  .scaleBtn{position:absolute;left:10px;top:10px;border:2px solid #000;background:#fff;font-weight:700;
+          padding:6px 10px;border-radius:6px;cursor:pointer;opacity:0;transition:.2s;z-index:5}
+  .frame.show-ui .scaleBtn{opacity:1}
+
+  /* popovers (only one open at a time) */
+  .pop{position:absolute;background:#111e;backdrop-filter:blur(4px);color:#fff;border:2px solid #000;border-radius:8px;
+       padding:10px;z-index:6;display:none;max-width:min(70vw,360px)}
+  .pop.show{display:block}
+  #popQ{right:10px;top:56px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{border:0;border-radius:999px;padding:6px 10px;background:var(--chip);color:#fff;cursor:pointer}
+  .chip.sel{background:var(--chip-sel)}
+  #popS{right:10px;top:56px;transform:translateY(58px)}
+  #popS input{width:100%;padding:6px 8px;border:0;border-radius:6px;margin-top:6px;color:#111}
+  .btn2{border:0;border-radius:6px;padding:6px 10px;background:#000;color:#fff;cursor:pointer}
+  #popU{left:10px;bottom:56px;max-width:min(70%,680px)}
+  #popU .row{display:flex;gap:6px}
+  #popU input{flex:1;padding:8px 10px;border-radius:6px;border:0}
+  #popU .go{border:0;background:#000;color:#fff;border-radius:6px;padding:8px 12px;font-weight:700}
+  #popF{right:10px;bottom:56px}
+  #popF label{display:block;border:0;background:#000;color:#fff;border-radius:6px;padding:8px 12px;cursor:pointer}
+  #file{display:none}
+
+  /* scale pop (bên trái trên) */
+  #popScale{left:10px;top:56px}
+
+  /* góc phải-dưới: hitbox để vào fullscreen */
+  .fs-hotspot{position:absolute;right:0;bottom:0;width:90px;height:60px;z-index:4}
+</style>
+</head>
+<body>
+<div class="frame" id="frame">
+  <video id="v" playsinline preload="metadata" x-webkit-airplay="allow" airplay="allow" crossorigin="anonymous"></video>
+
+  <!-- dock -->
+  <div class="dock">
+    <div class="icon" id="btnQ">HD</div>
+    <div class="icon" id="btnS">CC</div>
+    <div class="icon" id="btnU">↗</div>
+    <div class="icon" id="btnF">📁</div>
+  </div>
+  <!-- scale button -->
+  <button class="scaleBtn" id="btnScale">Scale</button>
+
+  <!-- popovers -->
+  <div class="pop" id="popQ">
+    <div style="font-weight:700;margin-bottom:6px">Quality</div>
+    <div class="chips" id="qlist"><button class="chip sel" id="qAuto" style="display:none">Auto</button></div>
+  </div>
+
+  <div class="pop" id="popS">
+    <div style="font-weight:700;margin-bottom:6px">Subtitles (.srt)</div>
+    <div class="chips" style="margin-bottom:6px">
+      <button class="btn2" id="subUrlBtn">Add URL</button>
+      <label class="btn2" for="subFile">Add File</label>
+      <input id="subFile" type="file" accept=".srt">
+      <button class="btn2" id="subClear">Remove</button>
+    </div>
+    <input id="subUrl" type="text" placeholder="Dán URL .srt rồi Enter">
+  </div>
+
+  <div class="pop" id="popU">
+    <div style="font-weight:700;margin-bottom:6px">Open URL</div>
+    <div class="row">
+      <input id="url" type="text" placeholder="Dán link video (mp4, mov, ts, m3u8…)">
+      <button class="go" id="go">➡️</button>
+    </div>
+  </div>
+
+  <div class="pop" id="popF">
+    <div style="font-weight:700;margin-bottom:6px">Local file</div>
+    <label for="file">Choose file…</label>
+    <input id="file" type="file" accept="video/*,.ts">
+  </div>
+
+  <!-- scale pop -->
+  <div class="pop" id="popScale">
+    <div style="font-weight:700;margin-bottom:6px">Scale / Aspect</div>
+    <div class="chips" id="scaleList"></div>
+  </div>
+
+  <!-- bottom controls -->
+  <div class="bar">
+    <button class="btn" id="pp">▶</button>
+    <span class="time" id="cur">00:00</span>
+    <div class="track"><div class="buf" id="buf"></div><div class="prog" id="prog"></div><input type="range" id="seek" min="0" max="1000" value="0"></div>
+    <span class="time" id="dur">00:00</span>
+    <button class="btn" id="pip">⧉</button>
+    <button class="btn" id="fs">⛶</button>
+  </div>
+
+  <!-- fullscreen hotspot -->
+  <div class="fs-hotspot" id="fsHot"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script>
+/* ==== helpers & refs ==== */
+const $=s=>document.querySelector(s);
+const frame=$('#frame'), v=$('#v');
+const pp=$('#pp'), cur=$('#cur'), dur=$('#dur'), seek=$('#seek'), prog=$('#prog'), buf=$('#buf');
+const pip=$('#pip'), fs=$('#fs');
+const fsHot=$('#fsHot');
+
+const btnQ=$('#btnQ'), btnS=$('#btnS'), btnU=$('#btnU'), btnF=$('#btnF'), btnScale=$('#btnScale');
+const popQ=$('#popQ'), popS=$('#popS'), popU=$('#popU'), popF=$('#popF'), popScale=$('#popScale');
+const qlist=$('#qlist'), qAuto=$('#qAuto');
+const urlIn=$('#url'), go=$('#go'), fileIn=$('#file');
+const subUrl=$('#subUrl'), subUrlBtn=$('#subUrlBtn'), subFile=$('#subFile'), subClear=$('#subClear');
+const scaleList=$('#scaleList');
+
+let hls=null, hideTimer=null, currentScale='auto';
+const isHls=u=>/\.m3u8(\?|$)/i.test(u);
+const fmt=t=>{t=Math.max(0,Math.floor(t||0));const h=Math.floor(t/3600),m=Math.floor((t%3600)/60),s=t%60;return(h?(h+':'):'')+String(m).padStart(2,h?'0':'')+':'+String(s).padStart(2,'0')}
+function fixDropbox(u){try{const x=new URL(u); if(x.hostname.endsWith('dropbox.com')){x.hostname='dl.dropboxusercontent.com'; x.searchParams.set('raw','1'); return x.toString();}}catch{} return u}
+function destroyHls(){if(hls){try{hls.destroy()}catch{} hls=null} qlist.innerHTML=''; qAuto.style.display='none'}
+
+function showUI(){frame.classList.add('show-ui'); clearTimeout(hideTimer); hideTimer=setTimeout(()=>frame.classList.remove('show-ui'),4000)}
+frame.addEventListener('pointerdown',showUI);
+
+/* one-pop-open */
+function openOnly(el){[popQ,popS,popU,popF,popScale].forEach(p=>p.classList.toggle('show',p===el)); showUI();}
+btnQ.onclick=()=>openOnly(popQ);
+btnS.onclick=()=>openOnly(popS);
+btnU.onclick=()=>openOnly(popU);
+btnF.onclick=()=>openOnly(popF);
+btnScale.onclick=()=>openOnly(popScale);
+
+/* ==== fullscreen from bottom-right corner ==== */
+async function enterFullscreen(){
+  const el=v;
+  try{
+    if(document.fullscreenElement){ await document.exitFullscreen(); }
+    else { (el.requestFullscreen||el.webkitRequestFullscreen||el.msRequestFullscreen).call(el); }
+  }catch{}
+}
+fs.onclick=enterFullscreen;
+fsHot.addEventListener('click', enterFullscreen);
+
+/* ==== play URL / HLS ==== */
+async function playURL(u){
+  if(!u) return; u=fixDropbox(u); destroyHls();
+  if(isHls(u) && !v.canPlayType('application/vnd.apple.mpegurl')){
+    if(window.Hls && Hls.isSupported()){
+      hls=new Hls({enableWorker:true,maxBufferLength:60});
+      hls.loadSource(u); hls.attachMedia(v);
+      hls.on(Hls.Events.MANIFEST_PARSED, ()=>{
+        const lvls=(hls.levels||[]).slice().sort((a,b)=>(b.height||0)-(a.height||0));
+        qlist.innerHTML='';
+        if(lvls.length){
+          qAuto.style.display='inline-block'; qAuto.onclick=()=>{hls.currentLevel=-1;mark(qAuto)}; qlist.appendChild(qAuto); mark(qAuto);
+          lvls.forEach((L,idx)=>{const b=document.createElement('button'); b.className='chip'; const h=L.height||0; b.textContent=h?`${h}p`:(L.name||('L'+idx));
+            b.onclick=()=>{hls.currentLevel=L.id ?? idx; mark(b)}; qlist.appendChild(b);});
+        }
+        v.play().catch(()=>{});
+      });
+    } else alert('Trình duyệt không hỗ trợ HLS.');
+  } else { v.src=u; v.play().catch(()=>{}); }
+  openOnly(null);
+}
+function mark(btn){qlist.querySelectorAll('.chip').forEach(x=>x.classList.remove('sel')); btn.classList.add('sel')}
+go.onclick=()=>playURL(urlIn.value.trim());
+urlIn.addEventListener('keydown',e=>{if(e.key==='Enter') go.click()});
+fileIn.addEventListener('change',()=>{const f=fileIn.files[0]; if(!f) return; destroyHls(); v.src=URL.createObjectURL(f); v.play().catch(()=>{}); openOnly(null); fileIn.value=''});
+
+/* ==== subtitles .srt ==== */
+function srtToVtt(srt){const lines=srt.replace(/\r+/g,'').trim().split('\n');let out=['WEBVTT',''];let i=0;while(i<lines.length){const line=lines[i].trim();if(/^\d+$/.test(line)){i++;continue}const m=line.match(/^(\d{2}:\d{2}:\d{2}[,\.]\d{1,3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{1,3})(.*)$/);if(m){const s=m[1].replace(',', '.'),e=m[2].replace(',', '.'),rest=(m[3]||'');out.push(`${s} --> ${e}${rest}`);i++;while(i<lines.length && lines[i].trim()!==''){out.push(lines[i]);i++}out.push('')}else i++}return out.join('\n')}
+function addSubtitleFromText(text,label='Subtitle'){v.querySelectorAll('track[data-auto="1"]').forEach(t=>t.remove());const src=URL.createObjectURL(new Blob([srtToVtt(text)],{type:'text/vtt'}));const tr=document.createElement('track');tr.kind='subtitles';tr.label=label;tr.srclang='xx';tr.src=src;tr.default=true;tr.dataset.auto='1';v.appendChild(tr)}
+subUrlBtn.onclick=()=>openOnly(popS);
+subUrl.addEventListener('keydown',async e=>{if(e.key==='Enter'){const u=subUrl.value.trim(); if(!u) return; try{const r=await fetch(u); const txt=await r.text(); addSubtitleFromText(txt,(u.split('/').pop()||'Subtitle')); subUrl.value=''; openOnly(null);}catch(err){alert('Không tải phụ đề: '+err)}}});
+subFile.addEventListener('change',()=>{const f=subFile.files[0]; if(!f) return; const rd=new FileReader(); rd.onload=()=>{addSubtitleFromText(String(rd.result), f.name); openOnly(null)}; rd.readAsText(f); subFile.value='';});
+subClear.onclick=()=>{v.querySelectorAll('track[data-auto="1"]').forEach(t=>t.remove()); openOnly(null)};
+
+/* ==== progress / pip ==== */
+function update(){const d=v.duration||0,c=v.currentTime||0; cur.textContent=fmt(c); dur.textContent=d?fmt(d):'00:00'; prog.style.width=(d?(c/d*100):0)+'%'; if(!seek.dragging) seek.value=Math.round((c/(d||1))*1000); try{if(v.buffered.length){const e=v.buffered.end(v.buffered.length-1); buf.style.width=(d?(e/d*100):0)+'%'}}catch{}}
+v.addEventListener('timeupdate',update); v.addEventListener('progress',update); v.addEventListener('loadedmetadata',()=>{update(); autoFit();});
+pp.onclick=()=>v.paused? v.play(): v.pause(); v.addEventListener('click',()=>v.paused? v.play(): v.pause());
+v.addEventListener('play',()=>{pp.textContent='❚❚'}); v.addEventListener('pause',()=>{pp.textContent='▶'});
+seek.addEventListener('input',()=>{seek.dragging=true; const d=v.duration||0; v.currentTime=(seek.value/1000)*d}); seek.addEventListener('change',()=>seek.dragging=false);
+pip.onclick=async()=>{try{ if(document.pictureInPictureElement) await document.exitPictureInPicture(); else if(v.requestPictureInPicture) await v.requestPictureInPicture(); }catch(e){alert('PiP không khả dụng: '+e)}};
+
+/* ==== Scale options ==== */
+const scaleOptions = [
+  {id:'auto', label:'Auto'},
+  {id:'contain', label:'Contain'},
+  {id:'cover', label:'Cover'},
+  {id:'fitw', label:'Fit-Width'},
+  {id:'fith', label:'Fit-Height'},
+  {id:'16-9', label:'16:9'},
+  {id:'4-3',  label:'4:3'},
+  {id:'1-1',  label:'1:1'},
+  {id:'21-9', label:'21:9'}
+];
+function renderScale(){
+  scaleList.innerHTML='';
+  scaleOptions.forEach(opt=>{
+    const b=document.createElement('button');
+    b.className='chip'+(currentScale===opt.id?' sel':'');
+    b.textContent=opt.label;
+    b.onclick=()=>{currentScale=opt.id; renderScale(); applyScale(); openOnly(null);};
+    scaleList.appendChild(b);
+  });
+}
+function applyScale(){
+  // reset
+  frame.style.aspectRatio = '';
+  v.style.objectFit = 'contain';
+  v.style.width = '100%'; v.style.height='100%';
+
+  switch(currentScale){
+    case 'contain': v.style.objectFit='contain'; break;
+    case 'cover':   v.style.objectFit='cover';   break;
+    case 'fitw':    v.style.width='100%'; v.style.height='auto'; v.style.objectFit='contain'; break;
+    case 'fith':    v.style.height='100%'; v.style.width='auto'; v.style.objectFit='contain'; break;
+    case '16-9':    frame.style.aspectRatio='16/9'; break;
+    case '4-3':     frame.style.aspectRatio='4/3'; break;
+    case '1-1':     frame.style.aspectRatio='1/1'; break;
+    case '21-9':    frame.style.aspectRatio='21/9'; break;
+    case 'auto':
+    default: autoFit(); return;
+  }
+}
+function autoFit(){
+  if(currentScale!=='auto') return;
+  const vw=v.videoWidth||16, vh=v.videoHeight||9;
+  const isPortrait = vh>vw;
+  // Khi dọc: để contain, khung tỉ lệ gần gũi hơn chiều dọc
+  if(isPortrait){
+    frame.style.aspectRatio = `${Math.max(9, Math.round(vw/vh*16))}/16`; // thu hẹp chiều ngang
+    v.style.objectFit='contain';
+  }else{
+    frame.style.aspectRatio='16/9';
+    v.style.objectFit='contain';
+  }
+}
+renderScale();
+window.addEventListener('resize', autoFit);
+window.addEventListener('orientationchange', autoFit);
+
+/* ==== autoload by ?src= ==== */
+(function autoload(){const u=new URLSearchParams(location.search).get('src'); if(u){ urlIn.value=u; playURL(u);}})();
+</script>
+</body>
+</html>
